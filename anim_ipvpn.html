@@ -1,0 +1,986 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IP-VPN sur MPLS</title>
+<style>
+:root{
+  --tr:#e8771d;  --trl:#fde9d7;   /* label de transport (orange) */
+  --vpn:#7a4bb0; --vpnl:#efe6f8;  /* label VPN (violet) */
+  --A:#2f6db5;   --Al:#e3edf9;    /* entreprise A (bleu) */
+  --B:#2e8b57;   --Bl:#e1f2e8;    /* entreprise B (vert) */
+  --ok:#1a7f37;  --no:#a0a8b3;
+  --hl:#ffd54a;  --hll:#fff4c7;
+  --ink:#1d2430; --muted:#6b7480; --line:#9aa3ad;
+  --isp:#eef2f7; --lsr:#1f3b57;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:#20242c;overflow:hidden;
+  font-family:"Segoe UI",system-ui,-apple-system,Roboto,Helvetica,Arial,sans-serif;color:var(--ink)}
+#stage{position:absolute;width:1280px;height:720px;left:50%;top:50%;background:#fff;overflow:hidden;transform-origin:center center}
+#stage.noanim *, #stage.noanim{transition:none !important;animation:none !important}
+
+/* ---------- en-tête ---------- */
+header{position:absolute;left:0;right:0;top:0;height:54px;display:flex;align-items:center;gap:12px;padding:0 16px;border-bottom:1px solid #e6e9ee;background:#fff;z-index:20}
+#titre{font-size:22px;font-weight:700;margin:0;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#sections{display:flex;gap:6px}
+#sections button{border:1px solid #d5d9df;background:#fff;border-radius:16px;padding:4px 11px;font-size:12.5px;cursor:pointer;color:var(--muted);font-family:inherit}
+#sections button.on{background:var(--lsr);color:#fff;border-color:var(--lsr)}
+#mode{font-size:12.5px;color:var(--vpn);text-decoration:none;border:1px dashed var(--vpn);border-radius:16px;padding:3px 10px;white-space:nowrap}
+#caption code{font:13.5px Consolas,"DejaVu Sans Mono",monospace;background:#e9edf2;padding:0 4px;border-radius:3px}
+#nav{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted)}
+#nav button{border:1px solid #d5d9df;background:#fff;border-radius:6px;width:30px;height:28px;cursor:pointer;font-size:14px;color:var(--ink)}
+#progress{position:absolute;left:0;bottom:0;height:4px;background:var(--tr);transition:width .3s;z-index:21}
+
+/* ---------- topologie ---------- */
+svg#topo{position:absolute;left:0;top:0;width:1280px;height:720px}
+.lnk{stroke:var(--line);stroke-width:3}
+.lnk-net{stroke:var(--line);stroke-width:1.6;stroke-dasharray:4 4}
+.lsp{stroke:var(--tr);stroke-width:9;opacity:.35;stroke-linecap:round}
+.vrfA{stroke:var(--A);stroke-width:9;opacity:.35;stroke-linecap:round}
+.vrfB{stroke:var(--B);stroke-width:9;opacity:.35;stroke-linecap:round}
+.bgp{fill:none;stroke:var(--vpn);stroke-width:2;stroke-dasharray:7 5}
+.bgp-t{font-size:11px;fill:var(--vpn);font-weight:700;text-anchor:middle;paint-order:stroke;stroke:#fff;stroke-width:4px}
+.lbl-lien{font-size:10.5px;fill:#59626d;text-anchor:middle;paint-order:stroke;stroke:#fff;stroke-width:4px}
+.lbl-if{font-size:10px;fill:#8a929c;text-anchor:middle;paint-order:stroke;stroke:#fff;stroke-width:3px}
+.rt text{font-size:14px;font-weight:700;text-anchor:middle;dominant-baseline:central}
+.r-core circle{fill:var(--lsr)} .r-core text{fill:#fff}
+.r-ce circle{fill:#fff;stroke-width:2.5} .r-ce text{font-size:11.5px}
+.r-sous{font-size:10.5px;fill:#6b7480;text-anchor:middle;font-weight:600}
+.net rect{stroke-width:1.4}
+.net text{font-size:12px;text-anchor:middle;dominant-baseline:central;font-weight:700}
+.dom rect{fill:var(--isp);stroke:#d3dbe6;stroke-width:1.5}
+.dom text{font-size:12px;fill:#7b8796;font-weight:700;letter-spacing:.06em}
+.glow{fill:none;stroke:var(--hl);stroke-width:6;animation:pulse 1.4s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+
+/* ---------- couche animée ---------- */
+#layer{position:absolute;left:0;top:0;width:1280px;height:720px;pointer-events:none;z-index:5}
+.pkt{position:absolute;left:0;top:0;transition:transform .8s cubic-bezier(.45,.05,.3,1),opacity .3s}
+.pkt .b{position:absolute;white-space:nowrap;text-align:center;border-radius:5px;box-shadow:0 1px 2px rgba(0,0,0,.25)}
+.pkt .ipb{display:flex;height:26px;left:-75px;width:150px;overflow:hidden}
+.pkt .ipb .hd{color:#fff;font-size:12px;font-weight:600;line-height:26px;padding:0 6px;flex:0 0 auto}
+.pkt .ipb .pl{background:#c7cdd6;flex:1;border-left:2px solid #fff}
+.pkt .lab{color:#fff;font-size:14px;font-weight:700;width:44px;height:26px;line-height:26px}
+.pkt .lab.tr{background:var(--tr)} .pkt .lab.vpn{background:var(--vpn)}
+.fx-in{animation:fxin .5s .75s both}
+@keyframes fxin{from{opacity:0;transform:translateX(-16px)}to{opacity:1;transform:none}}
+.fx-out{animation:fxout .6s .75s both}
+@keyframes fxout{from{opacity:1;transform:none}to{opacity:0;transform:translateY(-20px)}}
+.badge{position:absolute;transform:translateX(-50%);padding:3px 10px;border-radius:14px;font-size:12px;font-weight:800;letter-spacing:.03em;color:#fff;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,.25)}
+.badge.anim{animation:fxin2 .4s .8s both}
+@keyframes fxin2{from{opacity:0}to{opacity:1}}
+.op-tr{background:var(--tr)} .op-vpn{background:var(--vpn)} .op-ip{background:#4a5568} .op-no{background:#c0392b}
+.env{position:absolute;left:0;top:0;transition:transform .9s cubic-bezier(.45,.05,.3,1)}
+.env .in{transform:translate(-50%,-50%);background:#fff;border:2px solid var(--line);border-radius:8px;padding:2px 7px;font-size:11.5px;font-weight:700;white-space:nowrap;color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.2)}
+.env.A .in{border-color:var(--A);color:var(--A)} .env.B .in{border-color:var(--B);color:var(--B)}
+.env.bgp .in{border-color:var(--vpn);font-weight:600;font-size:11.5px;line-height:1.35;padding:3px 9px;text-align:left}
+.env.bgp .in .k{display:inline-block;font-size:10px;font-weight:800;color:#fff;border-radius:4px;padding:0 5px;margin-right:4px}
+.env.bgp.A .in .k{background:var(--A)} .env.bgp.B .in .k{background:var(--B)}
+.env .v{display:inline-block;margin-left:5px;font-weight:900;opacity:0;transition:opacity .3s .9s}
+.env.ok .v{opacity:1;color:var(--ok)}
+
+/* ---------- légende ---------- */
+#caption{position:absolute;left:24px;right:24px;top:258px;height:76px;font-size:15px;line-height:1.42;padding:7px 14px;border-left:5px solid var(--lsr);background:#f7f9fb;border-radius:0 8px 8px 0;overflow:hidden;z-index:6}
+#caption.question{border-left-color:var(--hl);background:var(--hll)}
+#caption.question::before{content:"À vous ! ";font-weight:800;color:#8a5a00}
+.T,.V{display:inline-block;color:#fff;font-weight:700;border-radius:4px;padding:0 6px;line-height:1.35}
+.T{background:var(--tr)} .V{background:var(--vpn)}
+.cA{color:var(--A);font-weight:700} .cB{color:var(--B);font-weight:700}
+
+/* ---------- tables ---------- */
+#tables{position:absolute;left:0;top:342px;width:1280px;height:370px}
+.panel{position:absolute;background:#fff;border:1px solid #d5dbe3;border-radius:9px;box-shadow:0 2px 6px rgba(20,30,50,.08);overflow:hidden;animation:apparait .4s both}
+@keyframes apparait{from{opacity:0}to{opacity:1}}
+.panel.act{border-color:var(--hl);box-shadow:0 0 0 3px var(--hl)}
+.panel h3{margin:0;font-size:12.5px;padding:4px 9px;color:#fff;display:flex;justify-content:space-between;align-items:baseline;gap:6px;white-space:nowrap}
+.panel h3 span{font-size:10.5px;font-weight:600;opacity:.9}
+.panel.flib h3{background:var(--lsr)} .panel.pA h3{background:var(--A)} .panel.pB h3{background:var(--B)}
+.panel.brut h3{background:#8a929c}
+.panel h3 .vl{background:var(--vpn);border-radius:4px;padding:0 5px;opacity:1;color:#fff}
+.panel table{border-collapse:collapse;width:100%;table-layout:fixed;font-size:12.5px}
+.panel th{font-size:9.5px;font-weight:600;color:var(--muted);background:#f3f5f8;padding:2px;line-height:1.1;border-bottom:1px solid #e3e7ec;text-align:center;height:24px}
+.panel td{height:27px;padding:0 2px;text-align:center;border-bottom:1px solid #eef1f4;white-space:nowrap;overflow:hidden}
+.panel td.vide{color:#c9cfd6}
+.panel td.labT{font-weight:700;color:#b85a0c} .panel td.labV{font-weight:700;color:var(--vpn)}
+.panel td.sm{font-size:10.5px}
+.panel tr.hl td{background:var(--hll)}
+.panel tr.err td{background:#fde2e0;color:#a5281b;font-weight:700}
+.panel tr.new td{animation:flash 1.3s .7s both}
+@keyframes flash{0%{background:var(--hl)}100%{background:transparent}}
+
+/* ---------- encarts (config Cisco, capture) ---------- */
+#encart{position:absolute;top:342px;z-index:8;display:none;gap:8px;align-items:flex-start}
+#encart.on{display:flex}
+#encart .bloc{background:#fff;border:1px solid #9aa3ad;border-radius:8px;box-shadow:0 6px 20px rgba(20,30,50,.22);overflow:hidden;flex:0 0 auto}
+#encart.anim{animation:apparait .5s .3s both}
+#encart h4{margin:0;font-size:12.5px;padding:5px 10px;background:#4a5360;color:#fff}
+#encart .capture h4{background:#2b5c8a} #encart .sortie h4{background:#1d2430}
+#encart h4 code{font:12px Consolas,"DejaVu Sans Mono",monospace;background:rgba(255,255,255,.18);padding:0 4px;border-radius:3px}
+#encart pre{margin:0;padding:7px 10px 8px;font:12.5px/1.42 Consolas,"DejaVu Sans Mono",Menlo,monospace;color:#1d2430}
+#encart .l{display:flex;align-items:center;gap:14px}
+#encart .t{white-space:pre;flex:0 0 auto}
+#encart .n{font:11.5px "Segoe UI",system-ui,sans-serif;color:#8a929c;font-style:italic}
+#encart .n::before{content:"← "}
+#encart .cA{color:var(--A)} #encart .cB{color:var(--B)}
+#encart .fort{font-weight:700}
+#encart .cadre .t{outline:2px solid #d0342c;outline-offset:1px;font-weight:700}
+#encart .cadre .n, #encart .rouge .n{color:#d0342c;font-weight:600}
+#encart .cad{outline:2px solid #d0342c;outline-offset:1px;font-weight:700}
+
+/* ---------- encadrés plein écran ---------- */
+#overlay{position:absolute;left:0;top:54px;width:1280px;height:666px;background:rgba(255,255,255,.94);z-index:15;display:none;align-items:center;justify-content:center}
+#overlay.on{display:flex}
+#overlay .box{width:1000px;border:2px solid var(--lsr);border-radius:14px;background:#fff;padding:20px 34px 22px;box-shadow:0 6px 24px rgba(20,30,50,.15)}
+#overlay h2{margin:0 0 10px;font-size:25px;color:var(--lsr)}
+#overlay ul{margin:0;padding-left:22px;font-size:18px;line-height:1.45}
+#overlay li{margin:5px 0}
+#overlay .td{margin-top:12px;font-size:15px;color:var(--muted)}
+#overlay .entete{display:flex;justify-content:center;margin:4px 0 14px}
+#overlay .entete .p{display:flex;height:40px;font-weight:700;color:#fff;font-size:17px;border-radius:6px;overflow:hidden}
+#overlay .entete .p div{display:flex;align-items:center;justify-content:center;padding:0 14px}
+#overlay .entete .lg{display:flex;justify-content:center;gap:10px;font-size:13px;color:var(--muted);margin-top:4px}
+#aide{position:absolute;right:14px;bottom:8px;font-size:11px;color:#b0b7c0;z-index:2}
+</style>
+</head>
+<body>
+<div id="stage">
+  <header>
+    <h1 id="titre"></h1>
+    <div id="sections"></div>
+    <a id="mode"></a>
+    <div id="nav"><button id="prev" title="Précédent (←)">◀</button><span id="cpt"></span><button id="next" title="Suivant (→ ou espace)">▶</button></div>
+  </header>
+  <svg id="topo" viewBox="0 0 1280 720"></svg>
+  <div id="caption"></div>
+  <div id="tables"></div>
+  <div id="layer"></div>
+  <div id="encart"></div>
+  <div id="overlay"></div>
+  <div id="aide">← → espace : naviguer · Début/Fin</div>
+  <div id="progress"></div>
+</div>
+
+<script>
+/* ======================================================================
+   CONFIGURATION : c'est la seule partie à modifier.
+   Après modification : enregistrer, puis recharger la page (F5).
+   ====================================================================== */
+const CONFIG = {
+  titre: `IP-VPN sur MPLS`,
+
+  // Routeurs de l'opérateur : 2 PE (bords) et des P (cœur). Position à l'écran, loopback.
+  coeur: {
+    R1: { x: 330, y: 170, role: `PE`, loopback: `1.1.1.1` },
+    R2: { x: 520, y: 170, role: `P`,  loopback: `2.2.2.2` },
+    R3: { x: 710, y: 170, role: `P`,  loopback: `3.3.3.3` },
+    R4: { x: 900, y: 170, role: `PE`, loopback: `4.4.4.4` },
+  },
+
+  // Liens du cœur : [routeur A, interface de A, routeur B, interface de B, réseau 10.0.xy.0/24]
+  liens: [
+    [`R1`, `e2`, `R2`, `e0`, `10.0.12.0/24`],
+    [`R2`, `e1`, `R3`, `e0`, `10.0.23.0/24`],
+    [`R3`, `e1`, `R4`, `e2`, `10.0.34.0/24`],
+  ],
+
+  // Labels de transport (LDP) : label local de chaque routeur pour la loopback de chaque PE.
+  // (Le PE lui-même annonce « pop » pour sa propre loopback.)
+  labelsLDP: {
+    R1: { R4: 14 },
+    R2: { R1: 22, R4: 21 },
+    R3: { R1: 32, R4: 31 },
+    R4: { R1: 41 },
+  },
+
+  // Clients. rd : Route Distinguisher (rend les routes du client uniques dans BGP) ;
+  // rt : Route Target (désigne la VRF où importer les routes) ; routagePECE : `rip` ou `ospf`
+  // (animation Cisco seulement). Pour chaque site : son CE, le PE et l'interface du PE où il est raccordé,
+  // le réseau du lien PE–CE (PE en .1, CE en .2), le réseau du site, le label VPN que
+  // ce PE a choisi pour la VRF du client, et les positions à l'écran.
+  clients: {
+    A: { nom: `Entreprise A`, rd: `100:1`, rt: `200:1`, routagePECE: `rip`, sites: [
+      { ce: `CE-A1`, pe: `R1`, intfPE: `e0`, lien: `192.168.1.0/24`, lan: `172.16.0.0/16`, labelVPN: 110, x: 185, y: 118, lanX: 68, lanY: 118 },
+      { ce: `CE-A2`, pe: `R4`, intfPE: `e0`, lien: `192.168.2.0/24`, lan: `172.17.0.0/16`, labelVPN: 410, x: 1065, y: 118, lanX: 1195, lanY: 118 },
+    ] },
+    B: { nom: `Entreprise B`, rd: `100:2`, rt: `200:2`, routagePECE: `ospf`, sites: [
+      { ce: `CE-B1`, pe: `R1`, intfPE: `e1`, lien: `192.168.1.0/24`, lan: `172.16.0.0/16`, labelVPN: 120, x: 185, y: 222, lanX: 68, lanY: 222 },
+      { ce: `CE-B2`, pe: `R4`, intfPE: `e1`, lien: `192.168.2.0/24`, lan: `172.17.0.0/16`, labelVPN: 420, x: 1065, y: 222, lanX: 1195, lanY: 222 },
+    ] },
+  },
+
+  // Numéro d'AS de l'opérateur (animation Cisco)
+  asBGP: 100,
+
+  // Dans les encarts de configuration Cisco, « e0 » s'écrit « Ethernet0 »
+  prefixeInterfaceCisco: `Ethernet`,
+
+  // Paquet suivi dans le plan de données (de site 1 vers site 2), pour A puis pour B
+  destination: `172.17.0.9`,
+};
+
+/* ======================================================================
+   MOTEUR : ne pas modifier en dessous (sauf pour changer le comportement)
+   ====================================================================== */
+const C = CONFIG;
+const CORE = Object.keys(C.coeur);
+const PES = CORE.filter(r => C.coeur[r].role === `PE`).sort((a, b) => C.coeur[a].x - C.coeur[b].x);
+const PS = CORE.filter(r => C.coeur[r].role !== `PE`).sort((a, b) => C.coeur[a].x - C.coeur[b].x);
+const CLIENTS = Object.keys(C.clients);
+const num = r => r.replace(/\D/g, ``);
+const base = net => net.split(`/`)[0].split(`.`).slice(0, 3).join(`.`);
+const ipSur = (r, net) => base(net) + `.` + num(r);
+const lo = r => C.coeur[r].loopback;
+
+/* --- cœur : adjacence et next hops (chemins les plus courts en sauts) --- */
+const adj = {}; CORE.forEach(r => adj[r] = []);
+C.liens.forEach(([a, ia, b, ib, net]) => { adj[a].push({ v: b, intf: ia, net }); adj[b].push({ v: a, intf: ib, net }); });
+const lien = (a, b) => adj[a].find(e => e.v === b);
+const NH = {};
+CORE.forEach(src => {
+  NH[src] = {}; const vu = new Set([src]); let front = adj[src].map(e => [e.v, e.v]);
+  while (front.length) {
+    const suiv = [];
+    front.forEach(([v, fh]) => { if (vu.has(v)) return; vu.add(v); NH[src][v] = fh; adj[v].forEach(e => suiv.push([e.v, fh])); });
+    front = suiv;
+  }
+});
+function chemin(a, b) { const c = [a]; while (c[c.length - 1] !== b) c.push(NH[c[c.length - 1]][b]); return c; }
+
+/* --- FLIB de transport (une ligne par loopback de PE) --- */
+const trIn  = (r, p) => r === p ? `pop` : C.labelsLDP[r][p];
+const trOut = (r, p) => { if (r === p) return `—`; const n = NH[r][p]; return n === p ? `pop` : C.labelsLDP[n][p]; };
+const trNH  = (r, p) => r === p ? `connecté` : ipSur(NH[r][p], lien(r, NH[r][p]).net);
+const trIf  = (r, p) => r === p ? `lo` : lien(r, NH[r][p]).intf;
+
+/* --- sites --- */
+const SITES = [];
+CLIENTS.forEach(k => C.clients[k].sites.forEach(s => SITES.push({ ...s, client: k, ipPE: base(s.lien) + `.1`, ipCE: base(s.lien) + `.2` })));
+const site = (pe, k) => SITES.find(s => s.pe === pe && s.client === k);
+const distants = s => SITES.filter(t => t.client === s.client && t.pe !== s.pe);
+
+/* --- contenu des tables --- */
+const PANNEAUX = {};   // id → { type, titre, sous, cols, lignes, col, slot, classe }
+const COLS = [[30, 200], [240, 260], [510, 260], [780, 260], [1050, 200]];
+const SLOT_H = 106;
+function panneau(id, p) { PANNEAUX[id] = p; }
+PES.forEach((pe, i) => {
+  const col = i === 0 ? 1 : 3, colCE = i === 0 ? 0 : 4;
+  CLIENTS.forEach((k, j) => {
+    const s = site(pe, k);
+    panneau(`vrf:${pe}:${k}`, { type: `vrf`, classe: `p${k}`, col, slot: j,
+      titre: `${pe} · VRF ${k}`, sous: `<span class="vl">label VPN ${s.labelVPN}</span> · ${s.intfPE}`,
+      cols: [[`Réseau`, 88], [`Next hop`, 78], [`Intf`, 30], [`Label VPN<br>sortant`, 64]],
+      lignes: [[s.lan, s.ipCE, s.intfPE, `—`], ...distants(s).map(t => [t.lan, lo(t.pe), trIf(pe, t.pe), t.labelVPN])],
+      labCol: { 3: `V` } });
+    panneau(`ce:${s.ce}`, { type: `ce`, classe: `p${k}`, col: colCE, slot: j,
+      titre: `${s.ce}`, sous: `table de routage`,
+      cols: [[`Réseau`, 92], [`Next hop`, 80], [`Intf`, 28]],
+      lignes: [[s.lan, `connecté`, `e1`], ...distants(s).map(t => [t.lan, s.ipPE, `e0`])] });
+  });
+  panneau(`flib:${pe}`, { type: `flib`, classe: `flib`, col, slot: 2, titre: `${pe} · FLIB`, sous: `transport`,
+    cols: [[`Label<br>entrant`, 44], [`FEC`, 70], [`Label<br>sortant`, 46], [`Next hop`, 72], [`Intf`, 28]],
+    lignes: PES.map(p => [trIn(pe, p), lo(p) + `/32`, trOut(pe, p), trNH(pe, p), trIf(pe, p)]), labCol: { 0: `T`, 2: `T` } });
+});
+PS.forEach((p, i) => panneau(`flib:${p}`, { type: `flib`, classe: `flib`, col: 2, slot: i, titre: `${p} · FLIB`, sous: `transport`,
+  cols: [[`Label<br>entrant`, 44], [`FEC`, 70], [`Label<br>sortant`, 46], [`Next hop`, 72], [`Intf`, 28]],
+  lignes: PES.map(q => [trIn(p, q), lo(q) + `/32`, trOut(p, q), trNH(p, q), trIf(p, q)]), labCol: { 0: `T`, 2: `T` } }));
+{ // table « classique » unique : le problème
+  const pe = PES[0], ss = CLIENTS.map(k => site(pe, k));
+  panneau(`brut`, { type: `brut`, classe: `brut`, col: 1, slot: 0, titre: `${pe} · table de routage unique ?`, sous: ``,
+    cols: [[`Réseau`, 100], [`Next hop`, 90], [`Intf`, 70]],
+    lignes: ss.map(s => [s.lan, s.ipCE, `${s.intfPE} (${s.client})`]) });
+}
+
+/* --- textes --- */
+const B_ = x => `<b>${x}</b>`;
+const T = x => `<span class="T">${x}</span>`;
+const V = x => `<span class="V">${x}</span>`;
+const K = k => `<span class="c${k}">${k}</span>`;
+const sommet = a => a[a.length - 1];
+
+/* --- état et étapes --- */
+function etatInitial() {
+  return { section: ``, titre: C.titre, caption: ``, question: false, vis: {}, deco: {},
+           hlRows: [], act: [], pkts: [], envs: [], hlNodes: [], badges: [], overlay: null, newRows: [], encart: null };
+}
+function remiseAZero(s) {
+  s.question = false; s.hlRows = []; s.act = []; s.pkts = []; s.envs = []; s.hlNodes = []; s.badges = []; s.overlay = null; s.newRows = []; s.encart = null;
+}
+const montrer = (s, id, lignes) => {     // lignes : liste d'indices, ou true pour toutes
+  const n = PANNEAUX[id].lignes.length;
+  const cur = s.vis[id] || new Array(n).fill(false);
+  const nv = cur.map((v, i) => v || lignes === true || lignes.includes(i));
+  nv.forEach((v, i) => { if (v && !cur[i] && s.vis[id]) s.newRows.push({ id, i }); });
+  s.vis = { ...s.vis, [id]: nv };
+};
+const STEPS = [], SECTIONS = [];
+function section(nom) { SECTIONS.push({ nom, debut: STEPS.length }); }
+function etape(fn) { const sec = SECTIONS[SECTIONS.length - 1].nom; STEPS.push(s => { s.section = sec; fn(s); }); }
+
+const POS = {};  // positions de tous les nœuds
+CORE.forEach(r => POS[r] = C.coeur[r]);
+SITES.forEach(s => { POS[s.ce] = { x: s.x, y: s.y }; POS[`lan:${s.ce}`] = { x: s.lanX, y: s.lanY }; });
+const vers = (a, b, t) => ({ x: POS[a].x + (POS[b].x - POS[a].x) * t, y: POS[a].y + (POS[b].y - POS[a].y) * t });
+
+const CISCO = typeof location !== `undefined` && /cisco/i.test(location.search);   // anim_ipvpn.html?cisco
+const peG = PES[0], peD = PES[1];
+const s1 = k => site(peG, k), s2 = k => site(peD, k);
+const lan1 = s1(CLIENTS[0]).lan, lan2 = s2(CLIENTS[0]).lan;
+
+/* --- encarts : configuration Cisco et capture MP-BGP --- */
+const masque = net => { const n = +net.split(`/`)[1]; return [0, 1, 2, 3].map(i => 256 - 2 ** (8 - Math.min(8, Math.max(0, n - 8 * i)))).map(x => x === 256 ? 0 : x).join(`.`); };
+const cmd = (txt, cls, note) => ({ txt, cls, note });
+function encartConfig(pe, notes = true) {
+  const L = [];
+  CLIENTS.forEach(k => L.push(cmd(`ip vrf ${k}`, `c${k}`, `crée la VRF du client ${k}`),
+    cmd(` rd ${C.clients[k].rd}`, `fort`, `préfixe collé aux routes de ${k} pour les rendre uniques dans BGP`),
+    cmd(` route-target export ${C.clients[k].rt}`, `fort`, `RT collé aux routes que ${pe} annonce`),
+    cmd(` route-target import ${C.clients[k].rt}`, `fort`, `importe les routes portant ce RT`), cmd(`!`)));
+  CLIENTS.forEach(k => { const t = site(pe, k);
+    L.push(cmd(`interface ${C.prefixeInterfaceCisco}${num(t.intfPE)}`),
+      cmd(` ip vrf forwarding ${k}`, `c${k}`, `${t.intfPE} est attachée à la VRF ${k}`),
+      cmd(` ip address ${t.ipPE} ${masque(t.lien)}`), cmd(`!`)); });
+  L.pop();
+  if (!notes) L.forEach(l => l.note = ``);
+  return { type: `config`, titre: `${pe} · Cisco IOS : créer une VRF avec <code>ip vrf &lt;nom&gt;</code>, l'attacher avec <code>ip vrf forwarding &lt;nom&gt;</code>`, lignes: L, x: 515, y: 0, w: 700 };
+}
+function encartCapture(de, pour, k, focus) {   // focus : `reponse` (RT, next hop, label) ou `rd`
+  const t = site(de, k), c = C.clients[k], I = n => ` `.repeat(2 * n);
+  const f = (quoi, note) => focus === quoi ? [`cadre`, note] : [``, ``];
+  const L = [
+    cmd(`▸ Internet Protocol Version 4, Src: ${lo(de)}, Dst: ${lo(pour)}`, ``, focus === `reponse` ? `session entre loopbacks` : ``),
+    cmd(`▸ Transmission Control Protocol, Dst Port: bgp (179)`),
+    cmd(`▾ Border Gateway Protocol - UPDATE Message`),
+    cmd(`${I(1)}▾ Path attributes`),
+    cmd(`${I(2)}▾ EXTENDED_COMMUNITIES`),
+    cmd(`${I(4)}Route Target: ${c.rt}`, ...f(`reponse`, `désigne la VRF ${k}`)),
+    cmd(`${I(2)}▾ MP_REACH_NLRI`),
+    cmd(`${I(4)}Subsequent address family identifier: Labeled VPN Unicast (128)`),
+    cmd(`${I(4)}Next hop: RD=0:0 IPv4=${lo(de)}`, ...f(`reponse`, `loopback de ${de}`)),
+    cmd(`${I(4)}▾ Network layer reachability information`),
+    cmd(`${I(5)}▾ Label Stack=${t.labelVPN} (bottom) <span class="cad">RD=${c.rd}, IPv4=${t.lan}</span>`, `rouge`,
+      `la route pour BGP : ${c.rd}:${t.lan}`),
+    cmd(`${I(7)}MP Reach NLRI Label Stack: ${t.labelVPN} (bottom)`, ...f(`reponse`, `label VPN`)),
+    cmd(`${I(7)}MP Reach NLRI Route Distinguisher: ${c.rd}`, `cadre`, `RD de la VRF ${k} : 8 octets collés devant l'IPv4`),
+    cmd(`${I(7)}MP Reach NLRI IPv4 prefix: ${t.lan.split(`/`)[0]}`, ...(focus === `rd` ? [`cadre`, `même préfixe pour ${CLIENTS.join(` et `)}`] : [``, ``])),
+  ];
+  return { type: `capture`, titre: `Capture Wireshark (extrait) : annonce de ${de} pour ${k}`, lignes: L, x: 515, y: 0, w: 750 };
+}
+
+const annonceBGP = (de, pour, k, verdict) => {
+  const t = site(de, k), y0 = 100 + CLIENTS.indexOf(k) * 42;
+  const xm = (POS[peG].x + POS[peD].x) / 2, dx = (POS[pour].x - POS[de].x) * .22;
+  return { de: { x: POS[de].x, y: POS[de].y - 40 }, a: { x: xm + dx, y: y0 }, cls: `bgp ${k}`, verdict,
+    html: `<span class="k">${k}</span>MP-BGP de ${de} : ${B_(`${C.clients[k].rd}:${t.lan}`)} · RT ${C.clients[k].rt}<br>next hop ${lo(de)} · label VPN ${V(t.labelVPN)}` };
+};
+
+if (!CISCO) {   // ===================== animation « principes » =====================
+
+/* ---------- Le problème ---------- */
+section(`Le problème`);
+etape(s => {
+  s.titre = `Deux entreprises, les mêmes adresses`;
+  s.caption = `Les entreprises ${K(`A`)} et ${K(`B`)} ont chacune deux sites, à relier par le réseau de l'opérateur.
+    Elles utilisent les ${B_(`mêmes adresses privées`)} : ${lan1} pour le site 1, ${lan2} pour le site 2.
+    L'opérateur doit relier A1 à A2 et B1 à B2, sans jamais mélanger A et B.`;
+});
+etape(s => {
+  s.titre = `Avec une seule table de routage…`;
+  montrer(s, `brut`, true); s.hlRows = [{ id: `brut`, i: 0, k: `err` }, { id: `brut`, i: 1, k: `err` }];
+  s.hlNodes = [peG];
+  const a = s1(`A`);
+  s.caption = `Si ${peG} n'avait qu'une table de routage, il y aurait ${B_(`deux routes`)} vers ${a.lan}, avec le même next hop ${a.ipCE}.
+    Quand un paquet pour ${base(a.lan)}.0.9 arrive du cœur, ${peG} ne peut pas savoir s'il est pour A ou pour B : ${B_(`l'adresse IP ne suffit plus`)}.`;
+});
+etape(s => {
+  s.titre = `La solution : trois ingrédients`; s.vis = {};
+  s.overlay = { titre: `La solution : trois ingrédients`, points: [
+    `<b>Une VRF par client</b> sur chaque PE : une table de routage privée, attachée à l'interface vers le CE du client. Les adresses de A et de B ne se mélangent plus.`,
+    `Un ${V(`label VPN`)} : il indique au PE de sortie ${B_(`dans quelle VRF`)} chercher.`,
+    `Un ${T(`label de transport`)} : il achemine le paquet jusqu'au ${B_(`bon PE`)} à travers le cœur (un LSP, comme dans l'animation précédente).`,
+    `<b>Qui sait quoi ?</b> Les CE ont des tables de routage ordinaires et ne savent rien du VPN. Les PE ont les VRF de leurs clients et une FLIB. Les P n'ont que la FLIB de transport.`,
+  ] };
+});
+
+/* ---------- Plan de contrôle ---------- */
+section(`Plan de contrôle`);
+etape(s => {
+  s.titre = `1. LDP : des LSP entre les PE`;
+  CORE.forEach(r => montrer(s, `flib:${r}`, true));
+  s.deco = { lsp: true };
+  CORE.forEach(r => s.hlRows.push({ id: `flib:${r}`, i: PES.indexOf(peD), k: `hl` }));
+  s.caption = `Comme dans l'animation précédente, LDP remplit les FLIB du cœur. Ici, seules les ${B_(`loopbacks des PE`)}
+    (${PES.map(p => lo(p)).join(` et `)}) comptent : le LSP surligné va de ${peG} à ${peD}. Les P (${PS.join(`, `)}) n'en sauront jamais plus :
+    ils ne connaissent ${B_(`aucune adresse de client`)}.`;
+});
+etape(s => {
+  s.titre = `2. Une VRF par client sur chaque PE`;
+  s.deco = { ...s.deco, lsp: false, vrf: true };
+  PES.forEach(pe => CLIENTS.forEach(k => montrer(s, `vrf:${pe}:${k}`, [])));
+  const g = CLIENTS.map(k => s1(k));
+  s.encart = encartConfig(peG);
+  s.caption = `Sur chaque PE, l'opérateur crée une ${B_(`VRF`)} (table de routage privée) par client et l'attache à l'interface vers son CE (encart : configuration de ${peG}).
+    Les deux interfaces ont la même adresse ${g[0].ipPE} : aucun conflit, elles sont dans des VRF différentes. Le ${B_(`Route Target`)} servira à l'étape 4.
+    Chaque VRF reçoit aussi un ${V(`label VPN`)} choisi par son PE : ${PES.map(pe => `${pe} → ${CLIENTS.map(k => `${site(pe, k).labelVPN} (${k})`).join(`, `)}`).join(` ; `)}.`;
+});
+etape(s => {
+  s.titre = `3. Les CE annoncent leurs réseaux à leur PE`;
+  SITES.forEach(t => {
+    montrer(s, `ce:${t.ce}`, [0]); montrer(s, `vrf:${t.pe}:${t.client}`, [0]);
+    s.newRows.push({ id: `vrf:${t.pe}:${t.client}`, i: 0 });
+    s.envs.push({ de: POS[t.ce], a: vers(t.ce, t.pe, .62), cls: t.client, html: t.lan });
+  });
+  s.caption = `Chaque CE annonce le réseau de son site à son PE, avec un protocole de routage ordinaire (RIP, OSPF… ou une route statique).
+    Le PE range la route dans la ${B_(`VRF de l'interface`)} sur laquelle elle arrive : ${lan1} venant de ${s1(`A`).ce} → VRF A, ${lan1} venant de ${s1(`B`).ce} → VRF B.`;
+});
+
+etape(s => {
+  s.titre = `4. MP-BGP : les PE s'échangent les routes des clients`; s.question = true;
+  s.deco = { ...s.deco, bgp: true }; s.hlNodes = [peG]; s.act = CLIENTS.map(k => `vrf:${peG}:${k}`);
+  CLIENTS.forEach(k => s.envs.push(annonceBGP(peD, peG, k, null)));
+  s.caption = `${peD} envoie à ${peG}, sur une session ${B_(`MP-BGP`)}, les routes de ses clients. ${peG} reçoit ${B_(`deux annonces`)} pour le même préfixe ${lan2}.
+    Dans quelle VRF range-t-il chacune ? Quel label VPN note-t-il ?`;
+});
+CLIENTS.forEach((k, j) => etape(s => {
+  const c = C.clients[k], t = s2(k);
+  s.titre = `4. MP-BGP : l'annonce pour ${k}`;
+  s.hlNodes = [peG]; s.act = [`vrf:${peG}:${k}`];
+  CLIENTS.forEach((x, i) => { s.envs.push(annonceBGP(peD, peG, x, i <= j ? `ok` : null)); if (i <= j) montrer(s, `vrf:${peG}:${x}`, [1]); });
+  s.hlRows.push({ id: `vrf:${peG}:${k}`, i: 1, k: `hl` });
+  s.encart = encartCapture(peD, peG, k, `reponse`);
+  s.caption = `Capture de l'annonce de ${K(k)} : le ${B_(`Route Target`)} ${c.rt} désigne la ${B_(`VRF ${k}`)} ; next hop ${lo(peD)} (loopback de ${peD}) ; ${V(`label VPN`)} ${t.labelVPN}.
+    Pour BGP, la route n'est pas ${t.lan} mais ${B_(`RD + préfixe`)} : ${B_(`${c.rd}:${t.lan}`)}.
+    Le ${B_(`RD`)} (Route Distinguisher, ${c.rd} pour ${k}) est une valeur propre à la VRF, collée devant l'adresse IPv4 pour la rendre unique.`;
+}));
+etape(s => {
+  const kb = CLIENTS[1];
+  s.titre = `4. MP-BGP : à quoi sert le RD ?`;
+  s.hlNodes = [peG]; s.act = CLIENTS.map(k => `vrf:${peG}:${k}`);
+  CLIENTS.forEach(k => { s.envs.push(annonceBGP(peD, peG, k, `ok`)); s.hlRows.push({ id: `vrf:${peG}:${k}`, i: 1, k: `hl` }); });
+  s.encart = encartCapture(peD, peG, kb, `rd`);
+  s.caption = `Pour BGP, une route est identifiée par son préfixe : une 2ᵉ annonce de ${lan2} par le même voisin ${B_(`remplacerait`)} la 1ʳᵉ, et ${peG} perdrait la route de A.
+    Le ${B_(`RD`)} est collé devant le préfixe : ${CLIENTS.map(k => B_(`${C.clients[k].rd}:${lan2}`)).join(` et `)} sont ${B_(`deux routes distinctes`)}, gardées toutes les deux.
+    Le RD rend la route unique ; le ${B_(`RT`)} dit dans quelle VRF l'importer. Il est retiré à l'import.`;
+});
+etape(s => {
+  s.titre = `4. MP-BGP… et dans l'autre sens`; s.hlNodes = [peD]; s.act = CLIENTS.map(k => `vrf:${peD}:${k}`);
+  CLIENTS.forEach(k => { s.envs.push(annonceBGP(peG, peD, k, `ok`)); montrer(s, `vrf:${peD}:${k}`, [1]); s.hlRows.push({ id: `vrf:${peD}:${k}`, i: 1, k: `hl` }); });
+  s.caption = `De même, ${peG} annonce à ${peD} ses routes ${lan1}, avec ses labels VPN ${CLIENTS.map(k => `${s1(k).labelVPN} (${k})`).join(` et `)}.
+    Les VRF sont complètes. Remarque : le next hop d'une route VPN est toujours la ${B_(`loopback du PE distant`)}, que le LSP de transport permet d'atteindre.`;
+});
+etape(s => {
+  s.titre = `5. Les PE annoncent les routes distantes à leurs CE`;
+  SITES.forEach(t => { montrer(s, `ce:${t.ce}`, [1]); distants(t).forEach(u => s.envs.push({ de: POS[t.pe], a: vers(t.pe, t.ce, .62), cls: t.client, html: u.lan })); });
+  CLIENTS.forEach(k => { s.hlRows.push({ id: `ce:${s1(k).ce}`, i: 0, k: `hl` }, { id: `ce:${s1(k).ce}`, i: 1, k: `hl` }); });
+  s.act = CLIENTS.map(k => `ce:${s1(k).ce}`);
+  s.caption = `Enfin, chaque PE annonce à ses CE les routes de leur VRF. Résultat : ${s1(`A`).ce} et ${s1(`B`).ce} ont ${B_(`exactement la même table`)}
+    (${lan2} via ${s1(`A`).ipPE}). Pour un client, tout le réseau de l'opérateur se comporte comme ${B_(`un simple routeur`)}.`;
+});
+
+/* ---------- Plan de données ---------- */
+section(`Plan de données`);
+const dst = C.destination;
+const L = (v, t) => ({ v, t });
+function trajet(k) {
+  const a = s1(k), b = s2(k), id = `pkt${k}`, lab = b.labelVPN, path = chemin(peG, peD);
+  const autre = k !== CLIENTS[0];   // 2e client : même adresse que pour le 1er
+  const P = (at, labels, fx, extra) => ({ id, k, at, labels, fx, dst, ...extra });
+  const tr0 = trOut(peG, peD);
+  const titre = `Un paquet de ${k} vers ${dst}`;
+  etape(s => {
+    s.titre = titre;
+    s.pkts = [P(`lan:${a.ce}`, [], null)];
+    s.caption = autre
+      ? `Un poste du site ${k}1 envoie à son tour un paquet vers ${B_(dst)} (site ${k}2) : la ${B_(`même adresse`)} que pour ${CLIENTS[0]}.`
+      : `Un poste du site ${k}1 envoie un paquet vers ${B_(dst)} (site ${k}2).`;
+  });
+  etape(s => {
+    s.titre = titre;
+    s.pkts = [P(a.ce, [], null)]; s.hlNodes = [a.ce]; s.act = [`ce:${a.ce}`]; s.hlRows = [{ id: `ce:${a.ce}`, i: 1, k: `hl` }];
+    s.badges = [{ at: a.ce, text: `ROUTAGE IP`, op: `ip` }];
+    s.caption = `${a.ce} : routage IP ordinaire. ${b.lan} → next hop ${a.ipPE} (${peG}), interface e0. Le CE ne sait rien du VPN.`
+      + (autre ? ` Sa table est identique à celle de ${s1(CLIENTS[0]).ce}.` : ``);
+  });
+  etape(s => {
+    s.titre = titre; s.question = true;
+    s.pkts = [P(peG, [], null)]; s.hlNodes = [peG];
+    s.caption = `Le paquet arrive sur l'interface ${B_(a.intfPE)} de ${peG}. Quelle table ${peG} consulte-t-il ? Quels labels ajoute-t-il, et dans quel ordre ?`;
+  });
+  etape(s => {
+    s.titre = titre;
+    s.pkts = [P(peG, [L(lab, `vpn`)], { op: `push` })]; s.hlNodes = [peG];
+    s.act = [`vrf:${peG}:${k}`]; s.hlRows = [{ id: `vrf:${peG}:${k}`, i: 1, k: `hl` }];
+    s.badges = [{ at: peG, text: `PUSH ${lab} (VPN)`, op: `vpn` }];
+    s.caption = `${a.intfPE} est attachée à la ${B_(`VRF ${k}`)} : ${peG} y cherche ${dst} → ${b.lan}, next hop ${lo(peD)}, label VPN ${V(lab)}.
+      → ${B_(`PUSH`)} ${V(lab)}, pour que ${peD} sache dans quelle VRF chercher.`
+      + (autre ? ` Même destination que pour ${CLIENTS[0]}, mais autre VRF, donc autre label VPN.` : ``);
+  });
+  etape(s => {
+    s.titre = titre;
+    s.pkts = [P(peG, [L(lab, `vpn`), L(tr0, `tr`)], { op: `push` })]; s.hlNodes = [peG];
+    s.act = [`flib:${peG}`]; s.hlRows = [{ id: `flib:${peG}`, i: PES.indexOf(peD), k: `hl` }];
+    s.badges = [{ at: peG, text: `PUSH ${tr0} (transport)`, op: `tr` }];
+    s.caption = `Pour atteindre le next hop ${lo(peD)}, ${peG} consulte sa ${B_(`FLIB`)} : ligne ${lo(peD)}/32 → label sortant ${T(tr0)}.
+       → ${B_(`PUSH`)} ${T(tr0)} ${B_(`devant`)} le label VPN, envoi à ${path[1]} (${trIf(peG, peD)}).`
+      + (autre ? ` C'est le ${B_(`même`)} label de transport que pour ${CLIENTS[0]} : même PE de sortie.` : ``);
+  });
+  let cur = tr0;
+  path.slice(1, -1).forEach((r, i) => {
+    const o = trOut(r, peD), suiv = path[i + 2];
+    const labs = o === `pop` ? [L(lab, `vpn`)] : [L(lab, `vpn`), L(o, `tr`)];
+    const avant = cur;
+    etape(s => {
+      s.titre = titre;
+      s.pkts = [P(r, labs, { op: o === `pop` ? `pop` : `swap`, avant: [L(lab, `vpn`), L(avant, `tr`)] })]; s.hlNodes = [r];
+      s.act = [`flib:${r}`]; s.hlRows = [{ id: `flib:${r}`, i: PES.indexOf(peD), k: `hl` }];
+      s.badges = [{ at: r, text: o === `pop` ? `POP` : `SWAP ${avant} → ${o}`, op: `tr` }];
+      s.caption = o === `pop`
+        ? `${B_(r)} : ${T(avant)} → label sortant « pop » : il retire le label de transport (avant-dernier saut : ${peD} a annoncé « pop » pour sa loopback).
+           Le paquet arrive chez ${peD} avec le seul label VPN ${V(lab)}.`
+        : `${B_(r)} (P) ne lit que le label du ${B_(`sommet`)} : ${T(avant)} → ${B_(`SWAP`)} ${T(avant)} → ${T(o)}, envoi à ${suiv}.
+           Il ne voit ni le label VPN ni l'adresse IP : il ignore même que ce paquet appartient au client ${k}.`;
+    });
+    if (autre && i === 0) etape(s => {   // comparaison avec le paquet du 1er client, au premier P
+      const k0 = CLIENTS[0];
+      s.titre = `Dans le cœur, les deux paquets se ressemblent`; s.hlNodes = [r]; s.act = [`flib:${r}`];
+      s.hlRows = [{ id: `flib:${r}`, i: PES.indexOf(peD), k: `hl` }];
+      s.pkts = [P(r, labs, null), { id: `pkt${k0}`, k: k0, at: r, labels: labs.map(l => l.t === `vpn` ? L(s2(k0).labelVPN, `vpn`) : l), dst, dessous: true }];
+      s.caption = `Pour ${r}, les paquets de ${K(k0)} et de ${K(k)} portent le ${B_(`même label de transport`)} (${T(avant)} en entrée, ${T(o)} en sortie) : même LSP, même traitement.
+        Seul le label VPN diffère (${[k0, k].map(x => V(s2(x).labelVPN)).join(` / `)}) : il n'est lu qu'à la sortie, par ${peD}, pour choisir la VRF.`;
+    });
+    cur = o;
+  });
+  etape(s => {
+    s.titre = titre; s.question = true;
+    s.pkts = [P(peD, [L(lab, `vpn`)], null)]; s.hlNodes = [peD];
+    s.caption = `${peD} reçoit un paquet avec le label ${V(lab)}. Que fait-il ?`;
+  });
+  etape(s => {
+    s.titre = titre;
+    s.pkts = [P(peD, [], { op: `pop`, avant: [L(lab, `vpn`)] })]; s.hlNodes = [peD];
+    s.act = [`vrf:${peD}:${k}`]; s.hlRows = [{ id: `vrf:${peD}:${k}`, i: 0, k: `hl` }];
+    s.badges = [{ at: peD, text: `POP ${lab} → VRF ${k}`, op: `vpn` }];
+    s.caption = `${V(lab)} est le label VPN de la ${B_(`VRF ${k}`)} de ${peD} : → ${B_(`POP`)}, puis recherche de ${dst} dans la VRF ${k}
+      → ${b.lan}, next hop ${b.ipCE} (${b.ce}), interface ${b.intfPE}.`;
+  });
+  etape(s => {
+    s.titre = titre;
+    s.pkts = [P(b.ce, [], null)]; s.hlNodes = [b.ce]; s.act = [`ce:${b.ce}`]; s.hlRows = [{ id: `ce:${b.ce}`, i: 0, k: `hl` }];
+    s.badges = [{ at: b.ce, text: `ROUTAGE IP`, op: `ip` }];
+    s.caption = `${b.ce} : ${b.lan} est directement connecté → le paquet est remis au site ${k}2.`;
+  });
+  etape(s => {
+    s.titre = titre;
+    s.pkts = [P(`lan:${b.ce}`, [], null)];
+    s.caption = `Arrivé. Adresse IP lue par ${a.ce}, ${peG} (dans la VRF ${k}), ${peD} (dans la VRF ${k}) et ${b.ce}. Les P n'ont lu que le label de transport.`
+      + (autre ? ` Les deux paquets pour ${dst} sont arrivés chacun chez le bon client, sans jamais être mélangés.` : ``);
+  });
+}
+etape(s => {
+  CLIENTS.forEach(k => { SITES.forEach(t => { montrer(s, `ce:${t.ce}`, true); montrer(s, `vrf:${t.pe}:${t.client}`, true); }); });
+  s.deco = { ...s.deco, vrf: true, bgp: false };
+  s.titre = `Plan de données`;
+  s.caption = `Toutes les tables sont prêtes. Suivons maintenant un paquet de ${K(`A`)}, puis un paquet de ${K(`B`)} vers la ${B_(`même adresse`)} ${dst}.`;
+});
+CLIENTS.forEach(k => trajet(k));
+
+/* ---------- À retenir ---------- */
+section(`À retenir`);
+etape(s => {
+  s.titre = `À retenir : IP-VPN sur MPLS`;
+  const a = s2(`A`), tr0 = trOut(peG, peD);
+  s.overlay = { titre: `À retenir : IP-VPN sur MPLS`, td: `→ TD exercices 4 et 5`,
+    entete: `<div><div class="p"><div style="background:var(--tr)">${tr0}</div><div style="background:var(--vpn)">${a.labelVPN}</div>
+      <div style="background:var(--A)">IPdst: ${dst}</div><div style="background:#c7cdd6;width:60px"></div></div>
+      <div class="lg"><span><b style="color:var(--tr)">transport</b> : jusqu'au PE de sortie</span>·<span><b style="color:var(--vpn)">VPN</b> : quelle VRF chez ce PE</span>·<span>paquet IP du client</span></div></div>`,
+    points: [
+      `<b>Une VRF par client</b> sur chaque PE, attachée à l'interface vers le CE : les clients peuvent utiliser les mêmes adresses.`,
+      `${V(`Label VPN`)} (interne) : choisi par le PE de sortie pour sa VRF et annoncé par <b>MP-BGP</b>, avec le <b>RD</b> (rend la route unique dans BGP) et le <b>RT</b> (désigne la VRF d'import). Il ne change pas dans le cœur.`,
+      `${T(`Label de transport`)} (externe) : appris par <b>LDP</b>, il mène à la loopback du PE de sortie (le next hop BGP). Il est échangé à chaque saut.`,
+      `Les <b>P</b> ne lisent que le label de transport : ils ignorent tout des VPN et des adresses des clients.`,
+      `Les <b>CE</b> ont des tables de routage ordinaires : le réseau de l'opérateur leur apparaît comme un routeur.`,
+      `Analogie : le label de transport est l'adresse de l'immeuble (le PE), le label VPN le numéro de l'appartement (la VRF).`,
+    ] };
+});
+
+}   // fin de l'animation « principes »
+
+if (CISCO) {   // ===================== animation « commandes Cisco IOS » =====================
+const ifc = i => `${C.prefixeInterfaceCisco}${num(i)}`;
+const joker = net => masque(net).split(`.`).map(x => 255 - x).join(`.`);           // masque inverse (OSPF)
+const reseau = net => net.split(`/`)[0];
+const classful = net => { const o = net.split(`/`)[0].split(`.`), n = +o[0]; const k = n < 128 ? 1 : n < 192 ? 2 : 3;
+  return o.map((x, i) => i < k ? x : `0`).join(`.`); };                              // « network » de RIP
+const ipLAN = s => { const o = reseau(s.lan).split(`.`); o[3] = +o[3] + 1; return o.join(`.`); };   // adresse du CE sur son LAN
+const proto = k => C.clients[k].routagePECE;
+const ospfPE = 2;                         // processus OSPF des VRF (le 1 est celui du cœur)
+const bloc = (titre, lignes, w, type = `config`) => ({ type, titre, w, lignes: lignes.map(l => typeof l === `string` ? cmd(l) : l) });
+const coloreK = (txt, k) => cmd(txt, `c${k}`);
+
+function cfgCoeur(r) {
+  const L = [`interface Loopback0`, ` ip address ${lo(r)} 255.255.255.255`];
+  adj[r].forEach(e => L.push(`interface ${ifc(e.intf)}`, ` ip address ${ipSur(r, e.net)} ${masque(e.net)}`));
+  L.push(`!`, `router ospf 1`, ` network ${lo(r)} 0.0.0.0 area 0`);
+  adj[r].forEach(e => L.push(` network ${reseau(e.net)} ${joker(e.net)} area 0`));
+  L.push(cmd(` mpls ldp autoconfig`, `fort`));
+  return bloc(`${r}# configure terminal`, L, 300);
+}
+function cfgCE(t) {
+  const L = [`interface Ethernet0`, ` ip address ${t.ipCE} ${masque(t.lien)}`, `interface Ethernet1`, ` ip address ${ipLAN(t)} ${masque(t.lan)}`, `!`];
+  if (proto(t.client) === `rip`) L.push(`router rip`, ` version 2`, ` network ${classful(t.lien)}`, ` network ${classful(t.lan)}`, ` no auto-summary`);
+  else L.push(`router ospf 1`, ` network ${reseau(t.lien)} ${joker(t.lien)} area 0`, ` network ${reseau(t.lan)} ${joker(t.lan)} area 0`);
+  return bloc(`${t.ce}# configure terminal`, L, 300);
+}
+function cfgPECE(t) {
+  const k = t.client, L = proto(k) === `rip`
+    ? [`router rip`, ` version 2`, coloreK(` address-family ipv4 vrf ${k}`, k), `  network ${classful(t.lien)}`, `  no auto-summary`, ` exit-address-family`]
+    : [coloreK(`router ospf ${ospfPE} vrf ${k}`, k), ` network ${reseau(t.lien)} ${joker(t.lien)} area 0`];
+  return bloc(`${t.pe}# configure terminal`, L, 300);
+}
+const autrePE = pe => PES.find(p => p !== pe);
+function cfgBGP(pe) {
+  const v = lo(autrePE(pe)), as = C.asBGP;
+  return bloc(`${pe}# configure terminal`, [`router bgp ${as}`, ` no bgp default ipv4-unicast`, ` neighbor ${v} remote-as ${as}`,
+    ` neighbor ${v} update-source Loopback0`, ` !`, cmd(` address-family vpnv4`, `fort`), `  neighbor ${v} activate`, `  neighbor ${v} send-community extended`, ` exit-address-family`], 360);
+}
+const redistVersBGP = k => proto(k) === `rip` ? `redistribute rip` : `redistribute ospf ${ospfPE}`;
+function cfgRedistBGP(pe) {
+  const L = [`router bgp ${C.asBGP}`];
+  CLIENTS.forEach(k => L.push(coloreK(` address-family ipv4 vrf ${k}`, k), cmd(`  ${redistVersBGP(k)}`, `fort`), ` exit-address-family`));
+  return bloc(`${pe}# configure terminal`, L, 340);
+}
+function cfgRedistCE(pe) {
+  const L = [];
+  CLIENTS.forEach(k => {
+    if (proto(k) === `rip`) L.push(`router rip`, coloreK(` address-family ipv4 vrf ${k}`, k), cmd(`  redistribute bgp ${C.asBGP} metric transparent`, `fort`), ` exit-address-family`, `!`);
+    else L.push(coloreK(`router ospf ${ospfPE} vrf ${k}`, k), cmd(` redistribute bgp ${C.asBGP} subnets`, `fort`), `!`);
+  });
+  L.pop();
+  return bloc(`${pe}# configure terminal`, L, 380);
+}
+const metrique = k => proto(k) === `rip` ? 1 : 20;
+const affPrefixe = net => { const n = +net.split(`/`)[1], o = +reseau(net).split(`.`)[0];
+  return n === (o < 128 ? 8 : o < 192 ? 16 : 24) ? reseau(net) : net; };
+function showBGP(pe) {
+  const L = [cmd(`${pe}# show ip bgp vpnv4 all`, `fort`), `   Network          Next Hop            Metric LocPrf Weight Path`];
+  CLIENTS.forEach(k => {
+    const ici = site(pe, k), la = distants(ici)[0], m = String(metrique(k));
+    L.push(cmd(`Route Distinguisher: ${C.clients[k].rd} (default for vrf ${k})`, `c${k}`),
+      `*> ${affPrefixe(ici.lan).padEnd(17)}${ici.ipCE.padEnd(20)}${m.padStart(6)}${``.padStart(7)}${`32768`.padStart(7)} ?`,
+      `*>i${affPrefixe(la.lan).padEnd(17)}${lo(la.pe).padEnd(20)}${m.padStart(6)}${`100`.padStart(7)}${`0`.padStart(7)} ?`);
+  });
+  return bloc(`Sortie de la commande`, L, 560, `sortie`);
+}
+function traceroute(k) {
+  const a = s1(k), b = s2(k), path = chemin(peG, peD), vpn = b.labelVPN;
+  const tr = x => `<span style="color:var(--tr);font-weight:700">${x}</span>`, vp = `<span style="color:var(--vpn);font-weight:700">${vpn}</span>`;
+  const L = [cmd(`${a.ce}# traceroute ${C.destination}`, `fort`), `Type escape sequence to abort.`, `Tracing the route to ${C.destination}`, ``];
+  let n = 1; const h = (txt, ms) => L.push(`${String(n++).padStart(3)} ${txt} ${ms}`);
+  h(a.ipPE, `4 msec 4 msec 4 msec`);
+  path.slice(1, -1).forEach((r, i) => h(`${ipSur(r, lien(path[i], r).net)} [MPLS: Labels ${tr(trOut(path[i], peD))}/${vp} Exp 0]`, `16 msec 12 msec 16 msec`));
+  h(`${b.ipPE} [MPLS: Label ${vp} Exp 0]`, `12 msec 12 msec 12 msec`);
+  h(b.ipCE, `16 msec 12 msec 16 msec`);
+  h(C.destination, `16 msec 16 msec 16 msec`);
+  return bloc(`Depuis le site ${k}1`, L, 600, `sortie`);
+}
+// en mode Cisco, les en-têtes des tables donnent la commande « show » correspondante
+Object.entries(PANNEAUX).forEach(([id, p]) => {
+  const [type, r, k] = id.split(`:`);
+  if (type === `flib`) p.sous = `show mpls forwarding-table`;
+  if (type === `vrf`) p.sous = `show ip route vrf ${k}`;
+  if (type === `ce`) p.sous = `show ip route`;
+});
+const idem = (qui) => `<span style="color:var(--muted)">(idem sur ${qui}, avec leurs adresses)</span>`;
+const tousCoeur = s => { s.hlNodes = [...CORE]; };
+
+section(`Cœur MPLS`);
+etape(s => {
+  s.titre = `Le réseau à configurer`;
+  s.caption = `Opérateur : ${PES.join(` et `)} (PE), ${PS.join(` et `)} (P), AS ${C.asBGP}. Clients : ${CLIENTS.map(k => `${K(k)} (routage PE–CE : ${proto(k).toUpperCase()}, RD ${C.clients[k].rd}, RT ${C.clients[k].rt})`).join(`, `)}.`;
+});
+etape(s => {
+  s.titre = `1. Adresses, OSPF et LDP dans le cœur`; tousCoeur(s);
+  s.encart = { x: 26, blocs: CORE.map(cfgCoeur) };
+  s.caption = `Tous les routeurs de l'opérateur.`;
+});
+etape(s => {
+  s.titre = `1. Résultat : les FLIB`; tousCoeur(s); s.deco = { lsp: true };
+  CORE.forEach(r => montrer(s, `flib:${r}`, true));
+  s.caption = `<code>show mpls forwarding-table</code> sur chaque routeur du cœur.`;
+});
+
+section(`VRF`);
+etape(s => {
+  s.titre = `2. Création des VRF et attachement aux interfaces`; s.hlNodes = [...PES]; s.deco = { ...s.deco, lsp: false };
+  s.encart = { x: 26, blocs: PES.map(pe => { const e = encartConfig(pe, false); return { ...e, titre: `${pe}# configure terminal`, w: 320 }; }) };
+  s.caption = `Sur les PE.`;
+});
+etape(s => {
+  s.titre = `2. Résultat : une VRF par client sur chaque PE`; s.hlNodes = [...PES]; s.deco = { ...s.deco, lsp: false, vrf: true };
+  PES.forEach(pe => CLIENTS.forEach(k => montrer(s, `vrf:${pe}:${k}`, [])));
+  s.caption = `VRF vides, attachées aux interfaces vers les CE.`;
+});
+
+section(`Routage PE–CE`);
+etape(s => {
+  s.titre = `3. Routage entre chaque CE et son PE`;
+  s.hlNodes = [peG, ...CLIENTS.map(k => s1(k).ce)];
+  s.encart = { x: 26, blocs: CLIENTS.flatMap(k => [cfgCE(s1(k)), cfgPECE(s1(k))]) };
+  s.caption = `Site 1 : ${CLIENTS.map(k => s1(k).ce).join(`, `)} et ${peG}. ${idem(`${peD}, ${CLIENTS.map(k => s2(k).ce).join(`, `)}`)}`;
+});
+etape(s => {
+  s.titre = `3. Résultat : chaque VRF connaît son site local`;
+  SITES.forEach(t => {
+    montrer(s, `ce:${t.ce}`, [0]); montrer(s, `vrf:${t.pe}:${t.client}`, [0]);
+    s.newRows.push({ id: `vrf:${t.pe}:${t.client}`, i: 0 });
+    s.envs.push({ de: POS[t.ce], a: vers(t.ce, t.pe, .62), cls: t.client, html: `${proto(t.client).toUpperCase()} : ${t.lan}` });
+  });
+  s.caption = `<code>show ip route vrf A</code>, <code>show ip route vrf B</code> sur les PE ; <code>show ip route</code> sur les CE.`;
+});
+
+section(`MP-BGP`);
+etape(s => {
+  s.titre = `4. Session MP-BGP entre les PE (famille VPNv4)`; s.hlNodes = [...PES]; s.deco = { ...s.deco, bgp: true };
+  s.encart = { x: 26, blocs: PES.map(cfgBGP) };
+  s.caption = `Sur les PE uniquement : les P n'ont pas de BGP.`;
+});
+etape(s => {
+  s.titre = `5. Redistribution des routes des CE dans MP-BGP`; s.hlNodes = [...PES];
+  s.encart = { x: 26, blocs: PES.map(cfgRedistBGP) };
+  s.caption = `Sur les PE, une address-family par VRF.`;
+});
+etape(s => {
+  s.titre = `5. Résultat : les PE s'échangent les routes VPNv4`; s.hlNodes = [...PES];
+  PES.forEach(pe => CLIENTS.forEach(k => { montrer(s, `vrf:${pe}:${k}`, [1]); s.hlRows.push({ id: `vrf:${pe}:${k}`, i: 1, k: `hl` }); }));
+  CLIENTS.forEach(k => s.envs.push(annonceBGP(peD, peG, k, `ok`)));
+  s.caption = `Annonces de ${peD} vers ${peG} (et inversement). <code>show ip route vrf A</code>, <code>show ip route vrf B</code> sur les PE.`;
+});
+etape(s => {
+  s.titre = `5. Résultat : la table BGP VPNv4 de ${peG}`; s.hlNodes = [peG];
+  s.encart = { x: 26, blocs: [showBGP(peG)] };
+  s.caption = `<code>show ip bgp vpnv4 all</code> sur ${peG}.`;
+});
+etape(s => {
+  s.titre = `6. Redistribution de MP-BGP vers les CE`; s.hlNodes = [...PES];
+  s.encart = { x: 26, blocs: PES.map(cfgRedistCE) };
+  s.caption = `Sur les PE.`;
+});
+etape(s => {
+  s.titre = `6. Résultat : les CE connaissent le site distant`;
+  SITES.forEach(t => { montrer(s, `ce:${t.ce}`, [1]); s.hlRows.push({ id: `ce:${t.ce}`, i: 1, k: `hl` });
+    distants(t).forEach(u => s.envs.push({ de: POS[t.pe], a: vers(t.pe, t.ce, .62), cls: t.client, html: `${proto(t.client).toUpperCase()} : ${u.lan}` })); });
+  s.caption = `<code>show ip route</code> sur les CE.`;
+});
+
+section(`Vérification`);
+etape(s => {
+  s.titre = `7. Vérification : traceroute depuis les deux sites 1`; s.deco = { ...s.deco, lsp: true, bgp: false };
+  s.hlNodes = chemin(peG, peD);
+  s.encart = { x: 26, blocs: CLIENTS.map(traceroute) };
+  s.caption = `${T(`label de transport`)} / ${V(`label VPN`)}`;
+});
+}   // fin de l'animation « commandes Cisco »
+
+
+/* ======================================================================
+   AFFICHAGE
+   ====================================================================== */
+if (typeof document !== `undefined`) {
+const $ = id => document.getElementById(id);
+const stage = $(`stage`), svg = $(`topo`), layer = $(`layer`);
+const NS = `http://www.w3.org/2000/svg`;
+document.title = CISCO ? `${C.titre} · commandes Cisco` : C.titre;
+$(`mode`).textContent = CISCO ? `← Principes` : `Commandes Cisco →`;
+$(`mode`).href = CISCO ? `anim_ipvpn.html` : `anim_ipvpn.html?cisco`;
+function el(tag, attrs, parent, txt) {
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (txt !== undefined) e.textContent = txt;
+  if (parent) parent.appendChild(e);
+  return e;
+}
+const coul = k => `var(--${k})`, coulL = k => `var(--${k}l)`;
+
+/* --- dessin statique --- */
+const decoG = {};
+(function dessiner() {
+  const xs = CORE.map(r => C.coeur[r].x), ys = CORE.map(r => C.coeur[r].y);
+  const g0 = el(`g`, { class: `dom` }, svg);
+  el(`rect`, { x: Math.min(...xs) - 62, y: 64, width: Math.max(...xs) - Math.min(...xs) + 124, height: Math.max(...ys) - 64 + 68, rx: 26 }, g0);
+  el(`text`, { x: Math.min(...xs) - 50, y: 82 }, g0, `RÉSEAU DE L'OPÉRATEUR`);
+  // décorations dynamiques (dessous)
+  decoG.lsp = el(`g`, { style: `display:none` }, svg);
+  const ch = chemin(peG, peD);
+  for (let i = 0; i < ch.length - 1; i++) el(`line`, { x1: POS[ch[i]].x, y1: POS[ch[i]].y, x2: POS[ch[i + 1]].x, y2: POS[ch[i + 1]].y, class: `lsp` }, decoG.lsp);
+  decoG.vrf = el(`g`, { style: `display:none` }, svg);
+  SITES.forEach(s => el(`line`, { x1: s.x, y1: s.y, x2: POS[s.pe].x, y2: POS[s.pe].y, class: `vrf${s.client}` }, decoG.vrf));
+  decoG.bgp = el(`g`, { style: `display:none` }, svg);
+  const A = POS[peG], Bp = POS[peD];
+  el(`path`, { d: `M${A.x},${A.y - 22} C${A.x + 60},${70} ${Bp.x - 60},${70} ${Bp.x},${Bp.y - 22}`, class: `bgp` }, decoG.bgp);
+  el(`text`, { x: Bp.x - 95, y: 98, class: `bgp-t` }, decoG.bgp, `session MP-BGP`);
+  // liens
+  SITES.forEach(s => {
+    el(`line`, { x1: s.lanX, y1: s.lanY, x2: s.x, y2: s.y, class: `lnk-net` }, svg);
+    el(`line`, { x1: s.x, y1: s.y, x2: POS[s.pe].x, y2: POS[s.pe].y, class: `lnk` }, svg);
+    const P = POS[s.pe], dx = s.x - P.x, dy = s.y - P.y, len = Math.hypot(dx, dy);
+    const haut = s.y < P.y, ext = haut ? -8 : 17, inv = haut ? 15 : -7;   // côté extérieur / intérieur du lien
+    el(`text`, { x: P.x + dx / len * 40, y: P.y + dy / len * 40 + ext, class: `lbl-if` }, svg, s.intfPE);
+    el(`text`, { x: s.x - dx / len * 36, y: s.y - dy / len * 36 + inv, class: `lbl-if` }, svg, `e0`);
+    el(`text`, { x: s.x - dx / len * 70, y: s.y - dy / len * 70 + ext, class: `lbl-lien` }, svg, s.lien);
+  });
+  C.liens.forEach(([a, ia, b, ib, net]) => {
+    const A = POS[a], Bb = POS[b], dx = Bb.x - A.x, dy = Bb.y - A.y, len = Math.hypot(dx, dy);
+    el(`line`, { x1: A.x, y1: A.y, x2: Bb.x, y2: Bb.y, class: `lnk` }, svg);
+    el(`text`, { x: (A.x + Bb.x) / 2, y: (A.y + Bb.y) / 2 + 17, class: `lbl-lien` }, svg, net);
+    [[A, dx, dy, ia], [Bb, -dx, -dy, ib]].forEach(([P, ddx, ddy, i]) =>
+      el(`text`, { x: P.x + ddx / len * 34, y: P.y + ddy / len * 34 - 7, class: `lbl-if` }, svg, i));
+  });
+  // nœuds
+  SITES.forEach(s => {
+    const g = el(`g`, { class: `net` }, svg), w = s.lan.length * 7.6 + 22;
+    el(`rect`, { x: s.lanX - w / 2, y: s.lanY - 14, width: w, height: 28, rx: 14, fill: coulL(s.client), stroke: coul(s.client) }, g);
+    el(`text`, { x: s.lanX, y: s.lanY, fill: coul(s.client) }, g, s.lan);
+    el(`text`, { x: s.lanX, y: s.lanY + 26, class: `r-sous`, fill: coul(s.client) }, svg, `site ${s.client}${s.pe === peG ? 1 : 2}`);
+    const gc = el(`g`, { class: `rt r-ce` }, svg);
+    el(`circle`, { cx: s.x, cy: s.y, r: 24, stroke: coul(s.client) }, gc);
+    el(`text`, { x: s.x, y: s.y, fill: coul(s.client) }, gc, s.ce);
+  });
+  CORE.forEach(r => {
+    const R = C.coeur[r], g = el(`g`, { class: `rt r-core` }, svg);
+    el(`circle`, { cx: R.x, cy: R.y, r: 22 }, g);
+    el(`text`, { x: R.x, y: R.y }, g, r);
+    el(`text`, { x: R.x, y: R.y + 38, class: `r-sous` }, svg, `${R.role} · ${R.loopback}`);
+  });
+  el(`g`, { id: `dyn` }, svg);
+})();
+
+SECTIONS.forEach(sc => {
+  const bt = document.createElement(`button`);
+  bt.textContent = sc.nom; bt.onclick = () => aller(sc.debut, false);
+  sc.bt = bt; $(`sections`).appendChild(bt);
+});
+
+/* --- tables --- */
+function tables(s, anim) {
+  const box = $(`tables`);
+  box.innerHTML = Object.entries(s.vis).map(([id, rows]) => {
+    const p = PANNEAUX[id], [x, w] = COLS[p.col];
+    const lignes = p.lignes.map((l, i) => {
+      const h = s.hlRows.find(r => r.id === id && r.i === i);
+      const nw = anim && s.newRows.some(r => r.id === id && r.i === i);
+      return `<tr class="${h ? h.k : ``}${nw ? ` new` : ``}">` + l.map((c, j) => {
+        if (!rows[i]) return `<td class="vide">…</td>`;
+        const lc = p.labCol && p.labCol[j] ? ` lab${p.labCol[j]}` : ``;
+        return `<td class="${lc}${c === `connecté` ? ` sm` : ``}">${c}</td>`;
+      }).join(``) + `</tr>`;
+    }).join(``);
+    return `<div class="panel ${p.classe}${s.act.includes(id) ? ` act` : ``}" style="left:${x}px;top:${p.slot * SLOT_H}px;width:${w}px${anim ? `` : `;animation:none`}">
+      <h3>${p.titre}<span>${p.sous}</span></h3>
+      <table><colgroup>${p.cols.map(c => `<col style="width:${c[1]}px">`).join(``)}</colgroup>
+      <tr>${p.cols.map(c => `<th>${c[0]}</th>`).join(``)}</tr>${lignes}</table></div>`;
+  }).join(``);
+}
+
+/* --- paquets --- */
+const pktEls = {};
+let pktsAvant = new Set();
+function paquets(s, anim) {
+  const presents = new Set(s.pkts.map(p => p.id));
+  Object.entries(pktEls).forEach(([id, e]) => { if (!presents.has(id)) e.style.opacity = 0; });
+  s.pkts.forEach(pk => {
+    let e = pktEls[pk.id];
+    if (!e) { e = pktEls[pk.id] = document.createElement(`div`); e.className = `pkt`; layer.appendChild(e); }
+    const P = POS[pk.at], teleport = !anim || !pktsAvant.has(pk.id);
+    if (teleport) e.style.transition = `none`;
+    const px = Math.min(Math.max(P.x, 83 + pk.labels.length * 47), 1197);   // ne pas sortir de l'écran
+    e.style.transform = `translate(${px}px,${P.y}px)`;
+    e.style.opacity = 1;
+    if (teleport) { void e.offsetWidth; e.style.transition = ``; }
+    const fx = anim ? pk.fx : null, LW = 44, GAPL = 3;
+    const v = pk.dessous ? `top:44px` : `bottom:30px`;   // dessous : sous le nom du routeur
+    let h = `<div class="b ipb" style="${v}"><span class="hd" style="background:var(--${pk.k})">IPdst: ${pk.dst}</span><span class="pl"></span></div>`;
+    const x = i => -75 - (i + 1) * (LW + GAPL);
+    pk.labels.forEach((l, i) => {
+      const c = fx && fx.op !== `pop` && i === pk.labels.length - 1 ? ` fx-in` : ``;
+      h += `<div class="b lab ${l.t}${c}" style="${v};left:${x(i)}px">${l.v}</div>`;
+    });
+    if (fx && (fx.op === `swap` || fx.op === `pop`)) {
+      const i = fx.avant.length - 1, l = fx.avant[i];
+      h += `<div class="b lab ${l.t} fx-out" style="${v};left:${x(i)}px">${l.v}</div>`;
+    }
+    e.innerHTML = h;
+  });
+  pktsAvant = presents;
+}
+
+/* --- rendu --- */
+let cur = -1;
+function rendu(i, anim) {
+  const s = (() => { const st = etatInitial(); for (let k = 0; k <= i; k++) { remiseAZero(st); STEPS[k](st); } return st; })();
+  stage.classList.toggle(`noanim`, !anim);
+  $(`titre`).textContent = s.titre;
+  $(`cpt`).textContent = `${i + 1} / ${STEPS.length}`;
+  $(`progress`).style.width = `${(i + 1) / STEPS.length * 100}%`;
+  SECTIONS.forEach(sc => sc.bt.classList.toggle(`on`, sc.nom === s.section));
+  const cap = $(`caption`); cap.innerHTML = s.caption; cap.className = s.question ? `question` : ``;
+  [`lsp`, `vrf`, `bgp`].forEach(d => decoG[d].style.display = s.deco[d] ? `` : `none`);
+  const dyn = svg.querySelector(`#dyn`); dyn.innerHTML = ``;
+  s.hlNodes.forEach(n => el(`circle`, { cx: POS[n].x, cy: POS[n].y, r: 30, class: `glow` }, dyn));
+  tables(s, anim);
+  paquets(s, anim);
+  layer.querySelectorAll(`.env,.badge`).forEach(e => e.remove());
+  s.badges.forEach(b => {
+    const P = POS[b.at], d = document.createElement(`div`);
+    d.className = `badge op-${b.op}` + (anim ? ` anim` : ``);
+    d.style.left = P.x + `px`; d.style.top = (P.y + 27) + `px`; d.textContent = b.text;
+    layer.appendChild(d);
+  });
+  s.envs.forEach(x => {
+    const d = document.createElement(`div`);
+    d.className = `env ${x.cls}`;
+    d.innerHTML = `<div class="in">${x.html}<span class="v">${x.verdict === `ok` ? `✓` : ``}</span></div>`;
+    layer.appendChild(d);
+    if (anim) {
+      d.style.transform = `translate(${x.de.x}px,${x.de.y}px)`; void d.offsetWidth;
+      requestAnimationFrame(() => { d.style.transform = `translate(${x.a.x}px,${x.a.y}px)`; if (x.verdict) d.classList.add(x.verdict); });
+    } else { d.style.transform = `translate(${x.a.x}px,${x.a.y}px)`; if (x.verdict) d.classList.add(x.verdict); }
+  });
+  const en = $(`encart`);
+  $(`tables`).style.visibility = CISCO && s.encart ? `hidden` : ``;   // mode Cisco : l'encart remplace les tables
+  if (s.encart) {
+    const e = s.encart;
+    en.className = `on` + (anim ? ` anim` : ``);
+    en.style.left = e.x + `px`; en.style.top = (342 + (e.y || 0)) + `px`;
+    en.innerHTML = (e.blocs || [e]).map(b => `<div class="bloc ${b.type}" style="width:${b.w}px"><h4>${b.titre}</h4><pre>` + b.lignes.map(l => {
+      const r = l.txt.match(/^[\s\u00a0]*/)[0].length;   // indentation hors du cadre
+      return `<div class="l ${l.cls || ``}"><span class="t" style="margin-left:${r}ch">${l.txt.slice(r)}</span>${l.note ? `<span class="n">${l.note}</span>` : ``}</div>`; }).join(``) + `</pre></div>`).join(``);
+  } else en.className = ``;
+  const ov = $(`overlay`);
+  if (s.overlay) {
+    ov.innerHTML = `<div class="box"><h2>${s.overlay.titre}</h2>${s.overlay.entete ? `<div class="entete">${s.overlay.entete}</div>` : ``}
+      <ul>${s.overlay.points.map(p => `<li>${p}</li>`).join(``)}</ul>${s.overlay.td ? `<div class="td">${s.overlay.td}</div>` : ``}</div>`;
+    ov.classList.add(`on`);
+  } else ov.classList.remove(`on`);
+  if (!anim) requestAnimationFrame(() => requestAnimationFrame(() => stage.classList.remove(`noanim`)));
+  cur = i;
+  try { history.replaceState(null, ``, `#${i + 1}`); } catch (e) {}
+}
+function aller(i, anim) { i = Math.max(0, Math.min(STEPS.length - 1, i)); if (i !== cur) rendu(i, anim); }
+document.addEventListener(`keydown`, e => {
+  if ([`ArrowRight`, ` `, `PageDown`, `Enter`].includes(e.key)) { e.preventDefault(); aller(cur + 1, true); }
+  else if ([`ArrowLeft`, `PageUp`, `Backspace`].includes(e.key)) { e.preventDefault(); aller(cur - 1, false); }
+  else if (e.key === `Home`) aller(0, false);
+  else if (e.key === `End`) aller(STEPS.length - 1, false);
+});
+$(`next`).onclick = () => aller(cur + 1, true);
+$(`prev`).onclick = () => aller(cur - 1, false);
+function echelle() { const k = Math.min(innerWidth / 1280, innerHeight / 720); stage.style.transform = `translate(-50%,-50%) scale(${k})`; }
+addEventListener(`resize`, echelle); echelle();
+const h0 = parseInt(location.hash.slice(1), 10);
+rendu(isNaN(h0) ? 0 : Math.max(0, Math.min(STEPS.length - 1, h0 - 1)), false);
+}
+</script>
+</body>
+</html>
